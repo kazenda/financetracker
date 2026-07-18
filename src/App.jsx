@@ -7,7 +7,7 @@ import {
 
 import {
   C, INITIAL_ACCOUNTS, INITIAL_EXPENSE_CATEGORIES, INITIAL_INCOME_CATEGORIES,
-  DEFAULT_SETTINGS, LOAN_CATEGORY, BACKUP_STALE_DAYS,
+  DEFAULT_SETTINGS, LOAN_CATEGORY, BACKUP_STALE_DAYS, STORE_KEYS,
 } from './lib/constants';
 import {
   currentMonthKey, monthKey, monthLabel, shiftMonth, todayISO, daysSince, formatIDR,
@@ -26,14 +26,6 @@ import TransactionForm from './components/TransactionForm';
 import TransactionLog from './components/TransactionLog';
 import SettingsModal from './components/SettingsModal';
 import { Toast } from './components/ui';
-
-const STORE_KEYS = {
-  transactions: 'transactions_v2',
-  accounts: 'accounts_v2',
-  expenseCategories: 'expenseCategories',
-  incomeCategories: 'incomeCategories',
-  settings: 'settings',
-};
 
 export default function App() {
   const [transactions, setTransactions] = useState([]);
@@ -121,7 +113,19 @@ export default function App() {
   // --- Transactions --------------------------------------------------------
   const saveTransaction = (data) => {
     if (editingTxId) {
-      setTransactions((prev) => prev.map((t) => (t.id === editingTxId ? { ...t, ...data } : t)));
+      setTransactions((prev) => prev.map((t) => {
+        if (t.id !== editingTxId) return t;
+        const merged = { ...t, ...data };
+        // Turning a loan into a plain expense/income would otherwise leave its
+        // settlement fields behind, where computeBalance keeps acting on them.
+        if (merged.type !== 'loan') {
+          delete merged.status;
+          delete merged.settledAmount;
+          delete merged.settledAccountId;
+          delete merged.settledDate;
+        }
+        return merged;
+      }));
       setEditingTxId(null);
       notify('Transaction updated.');
     } else {
@@ -136,13 +140,33 @@ export default function App() {
     }
   };
 
+  /**
+   * A settled loan is two rows — the loan itself, and the row carrying the
+   * difference between what was lent and what came back. They describe one
+   * event, so deleting either one takes both, and Undo brings both back.
+   * Without this the difference row survives as an orphan that keeps moving
+   * the monthly totals for a loan that no longer exists.
+   */
   const deleteTransaction = (tx) => {
-    setTransactions((prev) => prev.filter((t) => t.id !== tx.id));
-    if (editingTxId === tx.id) setEditingTxId(null);
-    notify('Transaction deleted.', {
-      actionLabel: 'Undo',
-      onAction: () => setTransactions((prev) => [tx, ...prev.filter((t) => t.id !== tx.id)]),
-    });
+    const loanId = tx.type === 'loan' ? tx.id : tx.loanId;
+    const removed = loanId
+      ? transactions.filter((t) => t.id === loanId || t.loanId === loanId)
+      : [tx];
+    const removedIds = new Set(removed.map((t) => t.id));
+
+    setTransactions((prev) => prev.filter((t) => !removedIds.has(t.id)));
+    if (removedIds.has(editingTxId)) setEditingTxId(null);
+
+    notify(
+      removed.length > 1 ? 'Loan and its settlement deleted.' : 'Transaction deleted.',
+      {
+        actionLabel: 'Undo',
+        onAction: () => setTransactions((prev) => [
+          ...removed,
+          ...prev.filter((t) => !removedIds.has(t.id)),
+        ]),
+      },
+    );
   };
 
   // --- Loans ---------------------------------------------------------------
@@ -151,8 +175,14 @@ export default function App() {
    * moves the money), and posts only the *difference* as a real transaction.
    * That difference carries no accountId, so it lands in the monthly totals
    * and the category breakdown without double-counting any balance.
+   *
+   * `category`/`subcategory` come from the settle form and describe what the
+   * difference actually was: who paid you the extra, or what the shortfall
+   * was spent on. They fall back to the generic Loans label.
    */
-  const settleLoan = (loan, { settledAmount, settledAccountId, settledDate }) => {
+  const settleLoan = (loan, {
+    settledAmount, settledAccountId, settledDate, category, subcategory,
+  }) => {
     const difference = settledAmount - loan.amount;
 
     setTransactions((prev) => {
@@ -171,8 +201,10 @@ export default function App() {
         type: difference > 0 ? 'income' : 'expense',
         amount: Math.abs(difference),
         accountId: null, // the loan record already moved the cash
-        category: LOAN_CATEGORY,
-        subcategory: loan.person || 'Loan',
+        category: category || LOAN_CATEGORY,
+        subcategory: subcategory?.trim()
+          || (difference > 0 ? loan.person : '')
+          || 'Unspecified',
         date: settledDate,
         note: difference > 0
           ? `${loan.person} repaid more than lent`
@@ -214,6 +246,37 @@ export default function App() {
       )),
     ]);
     notify(`Wrote off ${loan.person} — logged as spending.`);
+  };
+
+  /**
+   * Puts a settled (or written-off) loan back to open and removes the row
+   * holding its difference, so it can be settled again with the right numbers.
+   *
+   * This is the only way to correct a mistyped repayment: the settle form
+   * lives on the Open Loans card, which a settled loan has already left.
+   */
+  const undoSettlement = (loan) => {
+    const removed = transactions.filter((t) => t.loanId === loan.id);
+    const removedIds = new Set(removed.map((t) => t.id));
+
+    setTransactions((prev) => prev
+      .filter((t) => !removedIds.has(t.id))
+      .map((t) => {
+        if (t.id !== loan.id) return t;
+        const reopened = { ...t, status: 'open' };
+        delete reopened.settledAmount;
+        delete reopened.settledAccountId;
+        delete reopened.settledDate;
+        return reopened;
+      }));
+
+    notify(`${loan.person || 'That loan'} is open again — settle it with the right numbers.`, {
+      actionLabel: 'Undo',
+      onAction: () => setTransactions((prev) => [
+        ...removed,
+        ...prev.map((t) => (t.id === loan.id ? loan : t)),
+      ]),
+    });
   };
 
   // --- Accounts ------------------------------------------------------------
@@ -305,18 +368,34 @@ export default function App() {
   };
 
   // --- Import / export -----------------------------------------------------
-  const handleExport = () => {
+  const downloadBackup = (filename) => {
     const data = { transactions, accounts, expenseCategories, incomeCategories, settings };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `finance-backup-${todayISO()}.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleExport = () => {
+    downloadBackup(`finance-backup-${todayISO()}.json`);
     setSettings((prev) => ({ ...prev, lastBackupAt: Date.now() }));
     notify('Backup downloaded.');
   };
+
+  /**
+   * A record missing `id` or a well-formed `date` breaks rendering everywhere
+   * (inMonth, groupByDay). ErrorBoundary would catch the crash, but it is far
+   * better never to let a bad file in. Reject it at the door instead.
+   */
+  const isValidTransaction = (t) => (
+    t && typeof t === 'object'
+    && typeof t.id === 'string'
+    && typeof t.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.date)
+    && Number.isFinite(t.amount)
+  );
 
   const handleImport = (e) => {
     const file = e.target.files?.[0];
@@ -326,6 +405,27 @@ export default function App() {
       try {
         const data = JSON.parse(event.target.result);
         if (!Array.isArray(data.transactions)) throw new Error('missing transactions');
+
+        const bad = data.transactions.filter((t) => !isValidTransaction(t)).length;
+        if (bad > 0) {
+          notify(`That backup has ${bad} damaged transaction${bad === 1 ? '' : 's'} — nothing was imported.`);
+          return;
+        }
+
+        // Importing replaces everything and cannot be undone, so make the
+        // trade explicit and put the current data safely on disk first.
+        const confirmed = window.confirm(
+          'Replace all data in this app?\n\n'
+          + `Right now: ${transactions.length} transaction${transactions.length === 1 ? '' : 's'}\n`
+          + `This file: ${data.transactions.length} transaction${data.transactions.length === 1 ? '' : 's'}\n\n`
+          + 'Your current data will be downloaded as a backup first. This cannot be undone.',
+        );
+        if (!confirmed) return;
+
+        if (transactions.length > 0) {
+          downloadBackup(`finance-before-import-${todayISO()}.json`);
+        }
+
         setTransactions(data.transactions);
         setAccounts(data.accounts?.length ? data.accounts : INITIAL_ACCOUNTS);
         setExpenseCategories(data.expenseCategories || INITIAL_EXPENSE_CATEGORIES);
@@ -415,6 +515,8 @@ export default function App() {
           <Loans
             transactions={transactions}
             accounts={accounts}
+            expenseCategories={expenseCategories}
+            incomeCategories={incomeCategories}
             onSettle={settleLoan}
             onWriteOff={writeOffLoan}
           />
@@ -464,6 +566,7 @@ export default function App() {
           onFiltersChange={setFilters}
           onEdit={(tx) => setEditingTxId(tx.id)}
           onDelete={deleteTransaction}
+          onUndoSettlement={undoSettlement}
         >
           <TransactionForm
             key={editingTxId || 'new'}

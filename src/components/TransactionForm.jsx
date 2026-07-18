@@ -48,6 +48,10 @@ export default function TransactionForm({
   const categories = form.type === 'income' ? incomeCategories : expenseCategories;
   const isTransfer = form.type === 'transfer';
   const isLoan = form.type === 'loan';
+  // The settlement row's amount was worked out from this one when the loan was
+  // closed, and nothing recalculates it. Editing the amount now would leave
+  // that row silently wrong, so send the user through Undo settlement instead.
+  const amountLocked = editingTx?.type === 'loan' && editingTx.status !== 'open';
 
   // Focusing on mount is a DOM effect, not state sync.
   useEffect(() => {
@@ -114,7 +118,9 @@ export default function TransactionForm({
       accountId: form.accountId,
       toAccountId: isTransfer ? form.toAccountId : undefined,
       person: isLoan ? form.person.trim() : undefined,
-      status: isLoan ? 'open' : undefined,
+      // Keep the status an existing loan already has — sending a bare 'open'
+      // would quietly un-settle a loan that has already been repaid.
+      status: isLoan ? (editingTx?.status || 'open') : undefined,
       category: fixedLabel || form.category,
       subcategory: fixedLabel || form.subcategory,
       date: form.date,
@@ -170,6 +176,8 @@ export default function TransactionForm({
             inputMode="numeric"
             placeholder="Amount"
             aria-label="Amount in rupiah"
+            disabled={amountLocked}
+            title={amountLocked ? 'Reopen this loan to change the amount' : undefined}
             value={form.amount}
             onChange={(e) => { setForm({ ...form, amount: formatAmountInput(e.target.value) }); setError(''); }}
           />
@@ -184,21 +192,28 @@ export default function TransactionForm({
           />
         </div>
 
-        <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-          {QUICK_AMOUNTS.map((amt) => (
-            <button key={amt} type="button" className="chip" onClick={() => bumpAmount(amt)}>
-              +{formatIDRShort(amt)}
-            </button>
-          ))}
-          {parseAmountInput(form.amount) > 0 && (
-            <button
-              type="button" className="chip"
-              onClick={() => setForm({ ...form, amount: '' })}
-            >
-              clear
-            </button>
-          )}
-        </div>
+        {amountLocked ? (
+          <p style={{ fontSize: 10, color: C.muted, margin: 0, lineHeight: 1.5 }}>
+            Amount is locked while this loan is closed — use <strong>Undo settlement</strong> on
+            it in the log below to reopen it, then the amount can be changed.
+          </p>
+        ) : (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            {QUICK_AMOUNTS.map((amt) => (
+              <button key={amt} type="button" className="chip" onClick={() => bumpAmount(amt)}>
+                +{formatIDRShort(amt)}
+              </button>
+            ))}
+            {parseAmountInput(form.amount) > 0 && (
+              <button
+                type="button" className="chip"
+                onClick={() => setForm({ ...form, amount: '' })}
+              >
+                clear
+              </button>
+            )}
+          </div>
+        )}
 
         {isTransfer ? (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 6, alignItems: 'center' }}>

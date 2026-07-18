@@ -45,6 +45,7 @@ export const INITIAL_INCOME_CATEGORIES = {
   'Salary': ['Base Salary', 'Bonus'],
   'Freelance': ['Project', 'Consultation'],
   'Investment': ['Dividends', 'Interest'],
+  'People': ['Family', 'Friends'],
   'Other Income': ['Gift Received', 'Misc Income'],
 };
 
@@ -67,3 +68,14 @@ export const ACCOUNT_KINDS = { spending: 'Spending', savings: 'Savings' };
 // Nudge to export a backup once it has been this long, since everything lives
 // in this browser's storage and nothing else.
 export const BACKUP_STALE_DAYS = 14;
+
+// localforage keys. Shared with the error boundary, which reads storage
+// directly to rescue data when the app itself has failed to render.
+// The _v2 suffixes mark shapes that changed after the first release.
+export const STORE_KEYS = {
+  transactions: 'transactions_v2',
+  accounts: 'accounts_v2',
+  expenseCategories: 'expenseCategories',
+  incomeCategories: 'incomeCategories',
+  settings: 'settings',
+};

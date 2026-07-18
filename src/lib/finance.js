@@ -225,6 +225,27 @@ export const groupByDay = (transactions) => {
     }));
 };
 
+/**
+ * A loan and the row carrying its settlement difference are one event, so when
+ * they fall on the same day the log draws them as a single card. On different
+ * days they stay where they are — each belongs to the month its money actually
+ * counts in — and the log points them at each other by date instead.
+ *
+ * Takes one day's transactions, returns one entry per card to draw.
+ */
+export const pairSameDayLoans = (dayTransactions) => {
+  const ids = new Set(dayTransactions.map((t) => t.id));
+  return dayTransactions
+    // Drawn inside its loan's card instead, so skip the standalone copy.
+    .filter((tx) => !(tx.loanId && ids.has(tx.loanId)))
+    .map((tx) => ({
+      tx,
+      settlement: tx.type === 'loan'
+        ? dayTransactions.find((t) => t.loanId === tx.id) || null
+        : null,
+    }));
+};
+
 export const allTags = (transactions) => {
   const set = new Set();
   for (const tx of transactions) for (const t of tx.tags || []) set.add(t);

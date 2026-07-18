@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Search, X, Pencil, Trash2, Tag, ChevronRight, ArrowRight } from 'lucide-react';
+import { Search, X, Pencil, Trash2, Tag, ChevronRight, ArrowRight, RotateCcw } from 'lucide-react';
 import { C } from '../lib/constants';
-import { formatIDR, dayLabel, monthLabel } from '../lib/format';
-import { filterTransactions, groupByDay, allTags } from '../lib/finance';
+import { formatIDR, dayLabel, monthLabel, shortDate } from '../lib/format';
+import { filterTransactions, groupByDay, allTags, pairSameDayLoans } from '../lib/finance';
 import { EmptyState } from './ui';
 
 const TYPE_BADGE = {
@@ -18,12 +18,19 @@ const LOAN_STATUS = {
   'written-off': { label: 'written off', color: C.redBright },
 };
 
-function TransactionRow({ tx, accounts, isEditing, onEdit, onDelete, onTagClick }) {
+function TransactionRow({
+  tx, settlement, loanById, accounts, isEditing, onEdit, onDelete, onUndoSettlement, onTagClick,
+}) {
   const badge = TYPE_BADGE[tx.type] || TYPE_BADGE.expense;
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || 'Unknown';
   const isLoan = tx.type === 'loan';
   // Settlement differences carry no account — the loan record moved the money.
   const isSettlement = Boolean(tx.loanId);
+  const parentLoan = tx.loanId ? loanById.get(tx.loanId) : null;
+  const settlementBadge = settlement ? (TYPE_BADGE[settlement.type] || TYPE_BADGE.expense) : null;
+  // Settlement details are only reachable from the Open Loans card, which a
+  // closed loan has left — reopening it is the way back to those fields.
+  const canReopen = isLoan && (tx.status === 'settled' || tx.status === 'written-off');
   const sign = tx.type === 'income' ? '+' : (tx.type === 'transfer' || isLoan ? '' : '−');
   const amountColor = tx.type === 'income' ? C.greenBright
     : (tx.type === 'transfer' ? C.blueBright : (isLoan ? C.accent : C.textBright));
@@ -65,13 +72,19 @@ function TransactionRow({ tx, accounts, isEditing, onEdit, onDelete, onTagClick 
           {isLoan && tx.status === 'settled' && (
             <p style={{ fontSize: 11, color: C.faint, margin: '2px 0 0' }}>
               {accountName(tx.accountId)} → repaid {formatIDR(tx.settledAmount || 0)} into {accountName(tx.settledAccountId)}
+              {/* Only worth saying when the difference is not shown right below. */}
+              {!settlement && tx.settledDate && ` · settled ${shortDate(tx.settledDate)}`}
             </p>
           )}
           {isLoan && tx.status !== 'settled' && (
             <p style={{ fontSize: 11, color: C.faint, margin: '2px 0 0' }}>Paid from {accountName(tx.accountId)}</p>
           )}
           {isSettlement && (
-            <p style={{ fontSize: 11, color: C.faint, margin: '2px 0 0' }}>Loan settlement difference</p>
+            <p style={{ fontSize: 11, color: C.faint, margin: '2px 0 0' }}>
+              {parentLoan
+                ? `↳ from loan to ${parentLoan.person || 'someone'} · ${shortDate(parentLoan.date)}`
+                : 'Loan settlement difference'}
+            </p>
           )}
           {!isLoan && !isSettlement && tx.type !== 'transfer' && (
             <p style={{ fontSize: 11, color: C.faint, margin: '2px 0 0' }}>{accountName(tx.accountId)}</p>
@@ -103,10 +116,44 @@ function TransactionRow({ tx, accounts, isEditing, onEdit, onDelete, onTagClick 
         </div>
       </div>
 
+      {/* Same-day settlement, shown as part of the loan it belongs to. */}
+      {settlement && (
+        <div style={{
+          marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`,
+          display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+        }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, flexWrap: 'wrap' }}>
+            <span style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+              padding: '2px 6px', borderRadius: 3,
+              background: settlementBadge.bg, color: settlementBadge.color,
+            }}>{settlementBadge.label}</span>
+            <span style={{ fontSize: 12, color: C.text }}>{settlement.category}</span>
+            <span style={{ fontSize: 11, color: C.muted }}>· {settlement.subcategory}</span>
+          </span>
+          <span style={{
+            fontSize: 13, fontWeight: 600, flexShrink: 0,
+            color: settlement.type === 'income' ? C.greenBright : C.redBright,
+          }}>
+            {settlement.type === 'income' ? '+' : '−'}{formatIDR(settlement.amount)}
+          </span>
+        </div>
+      )}
+
       <div className="tx-actions" style={{
-        display: 'flex', justifyContent: 'flex-end', gap: 16,
+        display: 'flex', justifyContent: 'flex-end', gap: 16, flexWrap: 'wrap',
         marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`,
       }}>
+        {canReopen && (
+          <button
+            onClick={() => onUndoSettlement(tx)} className="btn-ghost"
+            style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, color: C.accent }}
+            title="Reopen this loan so the repayment can be re-entered"
+          >
+            <RotateCcw size={12} />
+            {tx.status === 'settled' ? 'Undo settlement' : 'Undo write-off'}
+          </button>
+        )}
         <button
           onClick={() => onEdit(tx)} className="btn-ghost"
           style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4 }}
@@ -126,7 +173,7 @@ function TransactionRow({ tx, accounts, isEditing, onEdit, onDelete, onTagClick 
 
 export default function TransactionLog({
   transactions, monthTransactions, accounts, viewMonth,
-  editingTxId, filters, onFiltersChange, onEdit, onDelete, children,
+  editingTxId, filters, onFiltersChange, onEdit, onDelete, onUndoSettlement, children,
 }) {
   const [collapsedDays, setCollapsedDays] = useState(() => new Set());
 
@@ -137,6 +184,12 @@ export default function TransactionLog({
   );
   const days = useMemo(() => groupByDay(filtered), [filtered]);
   const tags = useMemo(() => allTags(scoped), [scoped]);
+  // Built from every transaction, not just the filtered ones: a settlement
+  // still needs to name its loan when the loan is filtered out of view.
+  const loanById = useMemo(
+    () => new Map(transactions.filter((t) => t.type === 'loan').map((t) => [t.id, t])),
+    [transactions],
+  );
 
   const toggleDay = (date) => {
     setCollapsedDays((prev) => {
@@ -287,14 +340,17 @@ export default function TransactionLog({
 
                 {isOpen && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '8px 0 12px' }}>
-                    {day.txs.map((tx) => (
+                    {pairSameDayLoans(day.txs).map(({ tx, settlement }) => (
                       <TransactionRow
                         key={tx.id}
                         tx={tx}
+                        settlement={settlement}
+                        loanById={loanById}
                         accounts={accounts}
                         isEditing={editingTxId === tx.id}
                         onEdit={onEdit}
                         onDelete={onDelete}
+                        onUndoSettlement={onUndoSettlement}
                         onTagClick={(tag) => set({ tag: filters.tag === tag ? null : tag })}
                       />
                     ))}

@@ -9,11 +9,15 @@ import { openLoans, outstandingTotal } from '../lib/finance';
  * column rather than the log because it is cross-month state — a loan made in
  * June must stay visible while you are looking at August.
  */
-export default function Loans({ transactions, accounts, onSettle, onWriteOff }) {
+export default function Loans({
+  transactions, accounts, expenseCategories, incomeCategories, onSettle, onWriteOff,
+}) {
   const [settlingId, setSettlingId] = useState(null);
   const [amount, setAmount] = useState('');
   const [accountId, setAccountId] = useState(accounts[0]?.id || '');
   const [date, setDate] = useState(todayISO());
+  const [category, setCategory] = useState('');
+  const [subcategory, setSubcategory] = useState('');
 
   const loans = openLoans(transactions);
   if (loans.length === 0) return null; // stay out of the way when nothing is open
@@ -25,10 +29,32 @@ export default function Loans({ transactions, accounts, onSettle, onWriteOff }) 
     setAmount(formatAmountInput(String(loan.amount))); // repaid in full is the common case
     setAccountId(loan.accountId || accounts[0]?.id || '');
     setDate(todayISO());
+    setCategory(''); // '' means "use the default for whichever direction it lands in"
+    setSubcategory('');
   };
 
-  const confirmSettle = (loan) => {
-    onSettle(loan, { settledAmount: parseAmountInput(amount), settledAccountId: accountId, settledDate: date });
+  /**
+   * A surplus is money coming in, so it belongs to an income category; a
+   * shortfall is money that ended up spent, so it belongs to an expense one.
+   * Typing in the amount box can flip the direction, which would leave a
+   * category selected from the wrong list — so resolve it at render time
+   * rather than trying to keep the stored value in sync.
+   */
+  const resolveCategory = (isSurplus) => {
+    const names = Object.keys(isSurplus ? incomeCategories : expenseCategories);
+    if (names.includes(category)) return category;
+    if (isSurplus && names.includes('People')) return 'People';
+    return names[0] || '';
+  };
+
+  const confirmSettle = (loan, isSurplus) => {
+    onSettle(loan, {
+      settledAmount: parseAmountInput(amount),
+      settledAccountId: accountId,
+      settledDate: date,
+      category: resolveCategory(isSurplus),
+      subcategory,
+    });
     setSettlingId(null);
   };
 
@@ -46,6 +72,8 @@ export default function Loans({ transactions, accounts, onSettle, onWriteOff }) 
         {loans.map((loan) => {
           const age = daysSince(new Date(loan.date).getTime());
           const isSettling = settlingId === loan.id;
+          const difference = isSettling ? parseAmountInput(amount) - loan.amount : 0;
+          const isSurplus = difference > 0;
 
           return (
             <div
@@ -90,18 +118,38 @@ export default function Loans({ transactions, accounts, onSettle, onWriteOff }) 
                     />
                   </div>
 
-                  {parseAmountInput(amount) !== loan.amount && (
-                    <p style={{ fontSize: 10, color: C.muted, margin: 0 }}>
-                      {parseAmountInput(amount) > loan.amount
-                        ? `${formatIDR(parseAmountInput(amount) - loan.amount)} extra will be logged as income.`
-                        : `${formatIDR(loan.amount - parseAmountInput(amount))} short will be logged as spending.`}
-                    </p>
+                  {difference !== 0 && (
+                    <>
+                      <p style={{ fontSize: 10, color: C.muted, margin: 0 }}>
+                        {isSurplus
+                          ? `${formatIDR(difference)} extra will be logged as income.`
+                          : `${formatIDR(-difference)} short will be logged as spending.`}
+                      </p>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <select
+                          className="input-base" style={{ fontSize: 12, padding: '6px 8px' }}
+                          aria-label={isSurplus ? 'Income category for the extra' : 'Expense category for the shortfall'}
+                          value={resolveCategory(isSurplus)}
+                          onChange={(e) => setCategory(e.target.value)}
+                        >
+                          {Object.keys(isSurplus ? incomeCategories : expenseCategories)
+                            .map((c) => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <input
+                          className="input-base" style={{ fontSize: 12, padding: '6px 8px' }}
+                          aria-label={isSurplus ? 'Who the extra came from' : 'What the shortfall went on'}
+                          placeholder={isSurplus ? `From? e.g. ${loan.person || 'Mom'}` : 'For? e.g. Dinner'}
+                          value={subcategory}
+                          onChange={(e) => setSubcategory(e.target.value)}
+                        />
+                      </div>
+                    </>
                   )}
 
                   <div style={{ display: 'flex', gap: 6 }}>
                     <button
                       className="btn" style={{ flex: 1, padding: '6px', fontSize: 12, color: C.greenBright }}
-                      onClick={() => confirmSettle(loan)}
+                      onClick={() => confirmSettle(loan, isSurplus)}
                     >
                       <Check size={13} /> Settle
                     </button>

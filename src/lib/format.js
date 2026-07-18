@@ -75,6 +75,12 @@ export const daysElapsedInMonth = (key) => {
   return daysInMonth(key);
 };
 
+/** "2026-08-10" -> "10 Agu", for compact references to another day. */
+export const shortDate = (iso) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' });
+};
+
 /** "Today" / "Yesterday" / "Sen, 14 Jul" for day group headers. */
 export const dayLabel = (iso) => {
   if (iso === todayISO()) return 'Today';
