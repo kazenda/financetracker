@@ -63,6 +63,60 @@ export const monthTotals = (transactions, key) => {
 };
 
 /**
+ * The month's change in spendable cash — what `net` alone gets wrong.
+ *
+ * Money moved into a savings pot or fronted as a loan leaves your pocket
+ * without ever being an expense, so income − expense can read as a healthy
+ * surplus in a month you actually ran a deficit. This subtracts both.
+ *
+ * Loans are counted by principal only — out when made, back when settled — so
+ * this composes with `income`/`expense`, which already carry the settlement
+ * difference row that `settleLoan` posts. Repayments need no special case, and
+ * a write-off nets to zero in the month it is written off because its cash
+ * already left in the month the loan was made.
+ *
+ * Caveat: income logged directly against a savings account (interest on a pot)
+ * counts here as spendable. It is real income and usually small, but it is not
+ * cash you can actually reach without a withdrawal.
+ */
+export const monthFlow = (transactions, accounts, key) => {
+  const { income, expense, net, txs } = monthTotals(transactions, key);
+  const isSavings = (id) => accounts.some((a) => a.id === id && a.kind === 'savings');
+
+  let toSavings = 0;
+  let lentOut = 0;
+
+  for (const tx of txs) {
+    // Only crossing the savings line matters. Moving between two spending
+    // accounts — or between two pots — changes nothing about what you can spend.
+    if (tx.type === 'transfer') {
+      if (isSavings(tx.toAccountId) && !isSavings(tx.accountId)) toSavings += tx.amount;
+      if (isSavings(tx.accountId) && !isSavings(tx.toAccountId)) toSavings -= tx.amount;
+    }
+    if (tx.type === 'loan') lentOut += tx.amount;
+  }
+
+  // Principal coming back belongs to the month it was repaid, which is often
+  // not the month the loan was made — so this scans the whole list, not `txs`.
+  for (const tx of transactions) {
+    if (tx.type === 'loan' && tx.settledDate && tx.settledDate.startsWith(key)) {
+      lentOut -= tx.amount;
+    }
+  }
+
+  const used = expense + toSavings + lentOut;
+  return {
+    income,
+    expense,
+    net,
+    toSavings,
+    lentOut,
+    surplus: net - toSavings - lentOut,
+    usedShare: income > 0 ? (used / income) * 100 : 0,
+  };
+};
+
+/**
  * Expense totals per category, with subcategory detail and share of total.
  * Built from the transactions themselves, so categories deleted from settings
  * still show their historical spending instead of vanishing.

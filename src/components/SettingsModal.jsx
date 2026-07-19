@@ -257,13 +257,7 @@ export default function SettingsModal({
   expenseCategories, incomeCategories, actions, fileInputRef, onExport, onImport,
 }) {
   const [tab, setTab] = useState('general');
-  const [goalDraft, setGoalDraft] = useState(formatAmountInput(String(settings.savingGoal || 0)));
   const backupAgeDays = settings.lastBackupAt ? daysSince(settings.lastBackupAt) : null;
-
-  const commitGoal = (raw) => {
-    setGoalDraft(formatAmountInput(raw));
-    onSettingsChange({ ...settings, savingGoal: parseAmountInput(raw) });
-  };
 
   const setBudget = (cat, raw) => {
     const value = parseAmountInput(raw);
@@ -284,12 +278,6 @@ export default function SettingsModal({
 
       {tab === 'general' && (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <label className="field-label" htmlFor="saving-goal">Monthly Saving Goal (IDR)</label>
-          <input
-            id="saving-goal" className="input-base" inputMode="numeric"
-            value={goalDraft} onChange={(e) => commitGoal(e.target.value)}
-          />
-
           <Divider label="Monthly Budgets" />
           <p style={{ fontSize: 11, color: C.muted, margin: '0 0 10px' }}>
             Set a limit and the spending breakdown shows progress against it. Leave blank for none.

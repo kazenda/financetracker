@@ -1,18 +1,25 @@
-import { TrendingUp, TrendingDown, Target } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet } from 'lucide-react';
 import { C } from '../lib/constants';
 import { formatIDR } from '../lib/format';
 import { SectionLabel, StatCard } from './ui';
 
 /**
- * Month-level position: what came in, what went out, and progress toward the
- * saving goal. Account balances live in BalancesCard, loans in Loans.
+ * Month-level position: what came in, what went out, and whether you ended the
+ * month up or down once savings transfers and loans are taken off. Account
+ * balances live in BalancesCard, loans in Loans.
  */
-export default function Overview({ totals, prevTotals, settings }) {
-  const { income, expense, net } = totals;
-  const goal = settings.savingGoal || 0;
-  const goalProgress = goal > 0 ? Math.min((net / goal) * 100, 100) : 0;
-  const isGoalMet = goal > 0 && net >= goal;
-  const progressColor = net < 0 ? C.red : (goalProgress < 50 ? C.accent : C.green);
+export default function Overview({ flow, prevTotals }) {
+  const { income, expense, toSavings, lentOut, surplus, usedShare } = flow;
+  const isDeficit = surplus < 0;
+  const barColor = usedShare > 100 ? C.red : (usedShare > 80 ? C.accent : C.green);
+
+  // Named so the headline number can be explained without opening the log.
+  const deductions = [
+    toSavings > 0 && `${formatIDR(toSavings)} to savings`,
+    toSavings < 0 && `${formatIDR(-toSavings)} out of savings`,
+    lentOut > 0 && `${formatIDR(lentOut)} lent out`,
+    lentOut < 0 && `${formatIDR(-lentOut)} repaid to you`,
+  ].filter(Boolean);
 
   const delta = (current, previous) => {
     if (!previous) return null;
@@ -37,19 +44,27 @@ export default function Overview({ totals, prevTotals, settings }) {
       <div className="card" style={{ padding: '16px 18px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <span style={{ padding: 6, background: 'rgba(201,150,74,0.12)', borderRadius: 7, color: C.accent, display: 'flex' }}>
-            <Target size={16} />
+            <Wallet size={16} />
           </span>
-          <span style={{ color: C.muted, fontSize: 12, fontWeight: 500 }}>Net vs Goal</span>
+          <span style={{ color: C.muted, fontSize: 12, fontWeight: 500 }}>
+            {isDeficit ? 'Deficit' : 'Surplus'}
+          </span>
         </div>
-        <p style={{ fontSize: 22, fontWeight: 600, color: net < 0 ? C.redBright : C.accent, margin: '0 0 4px' }}>
-          {formatIDR(net)}
-          <span style={{ fontSize: 12, color: C.muted, fontWeight: 400, marginLeft: 6 }}>/ {formatIDR(goal)}</span>
+        <p style={{ fontSize: 22, fontWeight: 600, color: isDeficit ? C.redBright : C.accent, margin: '0 0 4px' }}>
+          {formatIDR(surplus)}
         </p>
+        {deductions.length > 0 && (
+          <p style={{ fontSize: 11, color: C.muted, margin: 0 }}>
+            after {deductions.join(', ')}
+          </p>
+        )}
         <div className="bar-track" style={{ marginTop: 10 }}>
-          <div className="bar-fill" style={{ width: `${Math.max(goalProgress, 0)}%`, background: progressColor }} />
+          <div className="bar-fill" style={{ width: `${Math.min(usedShare, 100)}%`, background: barColor }} />
         </div>
         <p style={{ fontSize: 11, color: C.muted, marginTop: 6, textAlign: 'right' }}>
-          {isGoalMet ? '✓ Goal met' : `${Math.max(goalProgress, 0).toFixed(0)}% reached`}
+          {income > 0
+            ? `${usedShare.toFixed(0)}% of income used`
+            : 'No income this month'}
         </p>
       </div>
     </>

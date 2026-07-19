@@ -13,7 +13,7 @@ import {
   currentMonthKey, monthKey, monthLabel, shiftMonth, todayISO, daysSince, formatIDR,
 } from './lib/format';
 import {
-  monthTotals, categoryBreakdown, cashflowSeries, buildRecap, inMonth, netWorthSeries,
+  monthTotals, monthFlow, categoryBreakdown, cashflowSeries, buildRecap, inMonth, netWorthSeries,
 } from './lib/finance';
 
 import Overview from './components/Overview';
@@ -85,6 +85,10 @@ export default function App() {
   const prevTotals = useMemo(
     () => monthTotals(transactions, shiftMonth(viewMonth, -1)),
     [transactions, viewMonth],
+  );
+  const flow = useMemo(
+    () => monthFlow(transactions, accounts, viewMonth),
+    [transactions, accounts, viewMonth],
   );
   const breakdown = useMemo(() => categoryBreakdown(totals.txs), [totals.txs]);
   const cashflow = useMemo(() => cashflowSeries(transactions, viewMonth), [transactions, viewMonth]);
@@ -510,7 +514,7 @@ export default function App() {
 
       <div className="grid-main">
         <div className="col col-overview">
-          <Overview totals={totals} prevTotals={prevTotals} settings={settings} />
+          <Overview flow={flow} prevTotals={prevTotals} />
 
           <Loans
             transactions={transactions}

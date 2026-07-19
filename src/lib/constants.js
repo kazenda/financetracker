@@ -50,7 +50,6 @@ export const INITIAL_INCOME_CATEGORIES = {
 };
 
 export const DEFAULT_SETTINGS = {
-  savingGoal: 2000000,
   budgets: {}, // { [expenseCategory]: monthlyLimitIDR }
   lastBackupAt: null, // epoch ms of the last JSON export
 };
