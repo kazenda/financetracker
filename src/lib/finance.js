@@ -117,16 +117,17 @@ export const monthFlow = (transactions, accounts, key) => {
 };
 
 /**
- * Expense totals per category, with subcategory detail and share of total.
- * Built from the transactions themselves, so categories deleted from settings
- * still show their historical spending instead of vanishing.
+ * Category totals for one transaction type (spending by default, or income),
+ * with subcategory detail and share of the type's total. Built from the
+ * transactions themselves, so categories deleted from settings still show
+ * their history instead of vanishing.
  */
-export const categoryBreakdown = (transactions) => {
-  const expenses = transactions.filter((t) => t.type === 'expense');
-  const total = expenses.reduce((s, t) => s + t.amount, 0);
+export const categoryBreakdown = (transactions, type = 'expense') => {
+  const rows = transactions.filter((t) => t.type === type);
+  const total = rows.reduce((s, t) => s + t.amount, 0);
   const map = new Map();
 
-  for (const tx of expenses) {
+  for (const tx of rows) {
     const cat = tx.category || 'Uncategorized';
     if (!map.has(cat)) map.set(cat, { name: cat, value: 0, count: 0, subs: new Map() });
     const entry = map.get(cat);
@@ -242,18 +243,32 @@ export const filterTransactions = (transactions, { q, accountId, type, tag }, ac
   const needle = (q || '').trim().toLowerCase();
   const accountName = (id) => accounts.find((a) => a.id === id)?.name || '';
 
+  // A loan's settlement difference row carries accountId: null on purpose (the
+  // loan record already moved the cash), so on its own it matches no account.
+  // Borrow its parent loan's accounts so an account filter still surfaces it
+  // alongside the loan it belongs to.
+  const loanById = new Map(
+    transactions.filter((t) => t.type === 'loan').map((t) => [t.id, t]),
+  );
+  const touchesAccount = (tx, id) => {
+    if (tx.accountId === id || tx.toAccountId === id || tx.settledAccountId === id) return true;
+    const parent = tx.loanId && loanById.get(tx.loanId);
+    return !!parent && (parent.accountId === id || parent.settledAccountId === id);
+  };
+
   return transactions.filter((tx) => {
     if (type && type !== 'all' && tx.type !== type) return false;
-    if (accountId && accountId !== 'all'
-      && tx.accountId !== accountId
-      && tx.toAccountId !== accountId
-      && tx.settledAccountId !== accountId) return false;
+    if (accountId && accountId !== 'all' && !touchesAccount(tx, accountId)) return false;
     if (tag && !(tx.tags || []).includes(tag)) return false;
     if (!needle) return true;
 
+    const parent = tx.loanId && loanById.get(tx.loanId);
     const haystack = [
       tx.category, tx.subcategory, tx.note, tx.person,
       accountName(tx.accountId), accountName(tx.toAccountId),
+      // So a difference row is findable by its loan's person and account too.
+      parent && parent.person,
+      parent && accountName(parent.settledAccountId),
       ...(tx.tags || []),
       String(tx.amount),
     ].filter(Boolean).join(' ').toLowerCase();

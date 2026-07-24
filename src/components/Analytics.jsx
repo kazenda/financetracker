@@ -13,33 +13,64 @@ const tooltipStyle = {
   borderRadius: 8, color: C.text, fontSize: 12,
 };
 
-export default function Analytics({ breakdown, cashflow, totalExpense, budgets, onFilterCategory }) {
+export default function Analytics({
+  breakdown, incomeBreakdown, cashflow, totalExpense, totalIncome, budgets, onFilterCategory,
+}) {
   const [expanded, setExpanded] = useState(null);
+  const [mode, setMode] = useState('expense'); // which side of the ledger to break down
+  const isIncome = mode === 'income';
+
+  const data = isIncome ? incomeBreakdown : breakdown;
+  const total = isIncome ? totalIncome : totalExpense;
+
+  const switchMode = (next) => {
+    setMode(next);
+    setExpanded(null); // a category open in one ledger has no counterpart in the other
+  };
 
   // The .col wrapper lives in App so Recap can sit in the same column.
   return (
     <>
       <SectionLabel>Analytics</SectionLabel>
 
-      {/* Spending by category — chart + itemised amounts */}
+      {/* By-category breakdown — chart + itemised amounts, toggling in/out */}
       <div className="card" style={{ padding: '18px 20px' }}>
-        <p style={{ fontSize: 13, fontWeight: 500, color: C.text, margin: '0 0 4px' }}>Spending Breakdown</p>
-        <p style={{ fontSize: 11, color: C.muted, margin: '0 0 12px' }}>
-          {totalExpense > 0 ? `${formatIDR(totalExpense)} across ${breakdown.length} categories` : 'By category'}
-        </p>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
+          <div>
+            <p style={{ fontSize: 13, fontWeight: 500, color: C.text, margin: '0 0 4px' }}>
+              {isIncome ? 'Income Breakdown' : 'Spending Breakdown'}
+            </p>
+            <p style={{ fontSize: 11, color: C.muted, margin: 0 }}>
+              {total > 0 ? `${formatIDR(total)} across ${data.length} categories` : 'By category'}
+            </p>
+          </div>
+          <div className="tabs" style={{ flexShrink: 0 }}>
+            {[['expense', 'Spending'], ['income', 'Income']].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`tab ${mode === value ? 'active' : ''}`}
+                aria-pressed={mode === value}
+                onClick={() => switchMode(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
-        {breakdown.length === 0 ? (
-          <EmptyState height={180}>No expenses logged this month</EmptyState>
+        {data.length === 0 ? (
+          <EmptyState height={180}>{isIncome ? 'No income logged this month' : 'No expenses logged this month'}</EmptyState>
         ) : (
           <>
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
                 <Pie
-                  data={breakdown} cx="50%" cy="50%"
+                  data={data} cx="50%" cy="50%"
                   innerRadius={55} outerRadius={85}
                   paddingAngle={3} dataKey="value" stroke="none"
                 >
-                  {breakdown.map((entry, i) => (
+                  {data.map((entry, i) => (
                     <Cell key={entry.name} fill={PIE_COLORS[i % PIE_COLORS.length]} opacity={0.85} />
                   ))}
                 </Pie>
@@ -53,10 +84,11 @@ export default function Analytics({ breakdown, cashflow, totalExpense, budgets, 
 
             {/* Itemised list: amount, share, budget, and subcategories on click */}
             <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {breakdown.map((cat, i) => {
+              {data.map((cat, i) => {
                 const color = PIE_COLORS[i % PIE_COLORS.length];
                 const isOpen = expanded === cat.name;
-                const budget = budgets?.[cat.name] || 0;
+                // Budgets are a spending concept; income categories have none.
+                const budget = isIncome ? 0 : (budgets?.[cat.name] || 0);
                 const overBudget = budget > 0 && cat.value > budget;
 
                 return (
@@ -113,7 +145,7 @@ export default function Analytics({ breakdown, cashflow, totalExpense, budgets, 
                           </div>
                         ))}
                         <button
-                          onClick={() => onFilterCategory(cat.name)}
+                          onClick={() => onFilterCategory(cat.name, mode)}
                           style={{
                             alignSelf: 'flex-start', background: 'none', border: 'none', padding: '2px 0',
                             fontSize: 11, color: C.accent,

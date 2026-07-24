@@ -90,7 +90,8 @@ export default function App() {
     () => monthFlow(transactions, accounts, viewMonth),
     [transactions, accounts, viewMonth],
   );
-  const breakdown = useMemo(() => categoryBreakdown(totals.txs), [totals.txs]);
+  const breakdown = useMemo(() => categoryBreakdown(totals.txs, 'expense'), [totals.txs]);
+  const incomeBreakdown = useMemo(() => categoryBreakdown(totals.txs, 'income'), [totals.txs]);
   const cashflow = useMemo(() => cashflowSeries(transactions, viewMonth), [transactions, viewMonth]);
   const recap = useMemo(
     () => buildRecap(transactions, shiftMonth(viewMonth, -1)),
@@ -549,11 +550,13 @@ export default function App() {
         <div className="col col-analytics">
           <Analytics
             breakdown={breakdown}
+            incomeBreakdown={incomeBreakdown}
             cashflow={cashflow}
             totalExpense={totals.expense}
+            totalIncome={totals.income}
             budgets={settings.budgets}
-            onFilterCategory={(category) => {
-              setFilters((f) => ({ ...f, q: category, type: 'expense', scope: 'month' }));
+            onFilterCategory={(category, type) => {
+              setFilters((f) => ({ ...f, q: category, type, scope: 'month' }));
             }}
           />
           <NetWorth series={netWorth} />
