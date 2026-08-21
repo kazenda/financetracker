@@ -524,6 +524,7 @@ export default function App() {
             incomeCategories={incomeCategories}
             onSettle={settleLoan}
             onWriteOff={writeOffLoan}
+            onAddSubcategory={addSubcategory}
           />
 
           <BalancesCard

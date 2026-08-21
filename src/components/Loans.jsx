@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { HandCoins, Check, X } from 'lucide-react';
+import { HandCoins, Check, X, Plus } from 'lucide-react';
 import { C } from '../lib/constants';
 import { formatIDR, formatAmountInput, parseAmountInput, todayISO, daysSince } from '../lib/format';
 import { openLoans, outstandingTotal } from '../lib/finance';
@@ -10,7 +10,7 @@ import { openLoans, outstandingTotal } from '../lib/finance';
  * June must stay visible while you are looking at August.
  */
 export default function Loans({
-  transactions, accounts, expenseCategories, incomeCategories, onSettle, onWriteOff,
+  transactions, accounts, expenseCategories, incomeCategories, onSettle, onWriteOff, onAddSubcategory,
 }) {
   const [settlingId, setSettlingId] = useState(null);
   const [amount, setAmount] = useState('');
@@ -18,6 +18,7 @@ export default function Loans({
   const [date, setDate] = useState(todayISO());
   const [category, setCategory] = useState('');
   const [subcategory, setSubcategory] = useState('');
+  const [newSub, setNewSub] = useState(null); // null = inline "add subcategory" input hidden
 
   const loans = openLoans(transactions);
   if (loans.length === 0) return null; // stay out of the way when nothing is open
@@ -31,6 +32,7 @@ export default function Loans({
     setDate(todayISO());
     setCategory(''); // '' means "use the default for whichever direction it lands in"
     setSubcategory('');
+    setNewSub(null);
   };
 
   /**
@@ -47,13 +49,36 @@ export default function Loans({
     return names[0] || '';
   };
 
+  const subsOf = (cat, isSurplus) => (isSurplus ? incomeCategories : expenseCategories)[cat] || [];
+
+  /**
+   * Same story as the category: the chosen subcategory might belong to the
+   * other direction's list after the amount flips, so pin it to a real member
+   * of the resolved category — falling back to its first subcategory rather
+   * than to nothing, which is what used to leave settlements "Unspecified".
+   */
+  const resolveSubcategory = (cat, isSurplus) => {
+    const subs = subsOf(cat, isSurplus);
+    if (subs.includes(subcategory)) return subcategory;
+    return subs[0] || '';
+  };
+
+  const commitNewSub = (cat, isSurplus) => {
+    const value = (newSub || '').trim();
+    if (!value) { setNewSub(null); return; }
+    onAddSubcategory(isSurplus ? 'income' : 'expense', cat, value);
+    setSubcategory(value);
+    setNewSub(null);
+  };
+
   const confirmSettle = (loan, isSurplus) => {
+    const cat = resolveCategory(isSurplus);
     onSettle(loan, {
       settledAmount: parseAmountInput(amount),
       settledAccountId: accountId,
       settledDate: date,
-      category: resolveCategory(isSurplus),
-      subcategory,
+      category: cat,
+      subcategory: resolveSubcategory(cat, isSurplus),
     });
     setSettlingId(null);
   };
@@ -127,21 +152,60 @@ export default function Loans({
                       </p>
                       <div style={{ display: 'flex', gap: 6 }}>
                         <select
-                          className="input-base" style={{ fontSize: 12, padding: '6px 8px' }}
+                          className="input-base" style={{ fontSize: 12, padding: '6px 8px', flex: 1, minWidth: 0 }}
                           aria-label={isSurplus ? 'Income category for the extra' : 'Expense category for the shortfall'}
                           value={resolveCategory(isSurplus)}
-                          onChange={(e) => setCategory(e.target.value)}
+                          onChange={(e) => { setCategory(e.target.value); setSubcategory(''); setNewSub(null); }}
                         >
                           {Object.keys(isSurplus ? incomeCategories : expenseCategories)
                             .map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
-                        <input
-                          className="input-base" style={{ fontSize: 12, padding: '6px 8px' }}
-                          aria-label={isSurplus ? 'Who the extra came from' : 'What the shortfall went on'}
-                          placeholder={isSurplus ? `From? e.g. ${loan.person || 'Mom'}` : 'For? e.g. Dinner'}
-                          value={subcategory}
-                          onChange={(e) => setSubcategory(e.target.value)}
-                        />
+                        <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                          {newSub === null ? (
+                            <>
+                              <select
+                                className="input-base"
+                                style={{ fontSize: 12, padding: '6px 8px', paddingRight: 26, width: '100%' }}
+                                aria-label="Subcategory"
+                                value={resolveSubcategory(resolveCategory(isSurplus), isSurplus)}
+                                onChange={(e) => setSubcategory(e.target.value)}
+                              >
+                                {subsOf(resolveCategory(isSurplus), isSurplus).length === 0 && (
+                                  <option value="">No subcategories</option>
+                                )}
+                                {subsOf(resolveCategory(isSurplus), isSurplus)
+                                  .map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => setNewSub('')}
+                                aria-label="Add subcategory"
+                                title="Add subcategory"
+                                style={{
+                                  position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)',
+                                  background: 'none', border: 'none', color: C.accent, display: 'flex', padding: 2,
+                                }}
+                              >
+                                <Plus size={13} />
+                              </button>
+                            </>
+                          ) : (
+                            <input
+                              className="input-base"
+                              style={{ fontSize: 12, padding: '6px 8px', width: '100%' }}
+                              placeholder="New subcategory"
+                              aria-label="New subcategory"
+                              value={newSub}
+                              autoFocus
+                              onChange={(e) => setNewSub(e.target.value)}
+                              onBlur={() => commitNewSub(resolveCategory(isSurplus), isSurplus)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') { e.preventDefault(); commitNewSub(resolveCategory(isSurplus), isSurplus); }
+                                if (e.key === 'Escape') setNewSub(null);
+                              }}
+                            />
+                          )}
+                        </div>
                       </div>
                     </>
                   )}

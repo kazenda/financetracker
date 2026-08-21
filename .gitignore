@@ -26,3 +26,5 @@ dist-ssr
 node_modules/
 dist/
 .env
+bank statement exports/
+DATA BACKUP/
