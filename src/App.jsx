@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import localforage from 'localforage';
 import {
   Settings, ChevronLeft, ChevronRight, CalendarDays,
-  Wallet, PiggyBank, ShieldAlert,
+  Wallet, PiggyBank, ShieldAlert, FileUp,
 } from 'lucide-react';
 
 import {
@@ -25,6 +25,8 @@ import Recap from './components/Recap';
 import TransactionForm from './components/TransactionForm';
 import TransactionLog from './components/TransactionLog';
 import SettingsModal from './components/SettingsModal';
+import ImportCsvModal from './components/ImportCsvModal';
+import { csvToDrafts, accountIdFromFilename } from './lib/csv';
 import { Toast } from './components/ui';
 
 export default function App() {
@@ -41,6 +43,8 @@ export default function App() {
   const [viewMonth, setViewMonth] = useState(currentMonthKey);
   const [editingTxId, setEditingTxId] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [csvDrafts, setCsvDrafts] = useState(null); // parsed rows awaiting review
+  const [csvAccountGuess, setCsvAccountGuess] = useState('');
   const [toast, setToast] = useState(null);
   const [filters, setFilters] = useState({
     q: '', accountId: 'all', type: 'all', tag: null, scope: 'month',
@@ -445,6 +449,70 @@ export default function App() {
     e.target.value = ''; // let the same file be re-selected
   };
 
+  // --- CSV statement import -----------------------------------------------
+  const csvInputRef = useRef(null);
+
+  const handleCsvFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const drafts = csvToDrafts(event.target.result);
+      if (drafts.length === 0) {
+        notify('No usable rows found — the CSV needs date and amount columns.');
+        return;
+      }
+      // The filename doubles as the account id: "debitmandiri_agustus.csv"
+      // pre-fills every row's account from the name match.
+      setCsvAccountGuess(accountIdFromFilename(file.name, accounts));
+      setCsvDrafts(drafts);
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  /**
+   * Turns confirmed drafts into real transactions. Amount sign in the CSV
+   * decides the type (positive = income, negative = expense) unless the user
+   * overrode it to transfer/loan in the review modal.
+   */
+  const confirmCsvImport = (drafts) => {
+    const imported = drafts.map((d) => ({
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      type: d.type,
+      amount: Math.abs(d.amount),
+      accountId: d.accountId,
+      toAccountId: d.type === 'transfer' ? d.toAccountId : undefined,
+      person: d.type === 'loan' ? (d.person || 'Unknown').trim() : undefined,
+      status: d.type === 'loan' ? 'open' : undefined,
+      category: d.category || 'Uncategorised',
+      subcategory: d.subcategory || '',
+      date: d.date,
+      note: d.note.trim(),
+      tags: [],
+    }));
+
+    setTransactions((prev) => [...imported, ...prev]);
+    setCsvDrafts(null);
+
+    // Jump to the month most of the statement covers so the rows are visible.
+    const monthCounts = imported.reduce((acc, t) => {
+      acc[monthKey(t.date)] = (acc[monthKey(t.date)] || 0) + 1;
+      return acc;
+    }, {});
+    const busiest = Object.entries(monthCounts).sort((a, b) => b[1] - a[1])[0][0];
+    if (busiest !== viewMonth) setViewMonth(busiest);
+
+    notify(`Imported ${imported.length} transaction${imported.length === 1 ? '' : 's'} from CSV.`, {
+      actionLabel: 'Undo',
+      onAction: () => setTransactions((prev) => {
+        const ids = new Set(imported.map((t) => t.id));
+        return prev.filter((t) => !ids.has(t.id));
+      }),
+    });
+  };
+
   const actions = {
     addAccount, updateAccount, deleteAccount,
     addCategory, renameCategory, deleteCategory, addSubcategory, deleteSubcategory,
@@ -507,6 +575,9 @@ export default function App() {
               {backupAge === null ? 'Never backed up' : `Backed up ${backupAge}d ago`}
             </button>
           )}
+          <button className="btn-icon" onClick={() => csvInputRef.current?.click()} aria-label="Import CSV bank statement" title="Import CSV bank statement">
+            <FileUp size={18} />
+          </button>
           <button className="btn-icon" onClick={() => setIsSettingsOpen(true)} aria-label="Open settings">
             <Settings size={18} />
           </button>
@@ -604,6 +675,21 @@ export default function App() {
           onImport={handleImport}
         />
       )}
+
+      {csvDrafts && (
+        <ImportCsvModal
+          drafts={csvDrafts}
+          accounts={accounts}
+          expenseCategories={expenseCategories}
+          incomeCategories={incomeCategories}
+          defaultAccountId={csvAccountGuess}
+          onConfirm={confirmCsvImport}
+          onClose={() => setCsvDrafts(null)}
+          onAddSubcategory={addSubcategory}
+        />
+      )}
+
+      <input type="file" ref={csvInputRef} onChange={handleCsvFile} accept=".csv,text/csv" style={{ display: 'none' }} />
 
       <Toast toast={toast} onDismiss={dismissToast} />
     </div>
