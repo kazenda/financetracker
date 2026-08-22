@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Check, Plus } from 'lucide-react';
 import { C, TRANSFER_CATEGORY, LOAN_CATEGORY } from '../lib/constants';
-import { formatIDR } from '../lib/format';
+import { formatIDR, shortDate } from '../lib/format';
 import { Modal } from './ui';
 
 const draftRow = (d, accounts, defaultAccountId = '') => ({
@@ -25,10 +25,22 @@ export default function ImportCsvModal({
   defaultAccountId, onConfirm, onClose, onAddSubcategory,
 }) {
   const [rows, setRows] = useState(() => drafts.map((d) => draftRow(d, accounts, defaultAccountId)));
+  const [range, setRange] = useState({ from: '', to: '' });
   const [error, setError] = useState('');
 
-  const included = rows.filter((r) => !r.skip);
+  const included = rows.filter((r) => !r.skip && !outOfRange(r));
   const categories = (type) => (type === 'income' ? incomeCategories : expenseCategories);
+
+  /** Empty bounds are open-ended: only the filled side filters. */
+  const outOfRange = (r) => (
+    (range.from && r.date < range.from) || (range.to && r.date > range.to)
+  );
+
+  const rangeExclusionReason = (date, r) => {
+    if (r.from && date < r.from) return `Before ${shortDate(r.from)}`;
+    if (r.to && date > r.to) return `After ${shortDate(r.to)}`;
+    return 'Outside the selected range';
+  };
 
   const repeatedDescriptions = useMemo(() => {
     const counts = new Map();
@@ -78,10 +90,40 @@ export default function ImportCsvModal({
 
   return (
     <Modal title={`Import CSV — ${included.length} of ${rows.length} rows`} onClose={onClose}>
-      <p style={{ fontSize: 12, color: C.muted, margin: '-12px 0 14px', lineHeight: 1.6 }}>
+      <p style={{ fontSize: 12, color: C.muted, margin: '-12px 0 10px', lineHeight: 1.6 }}>
         Confirm each row before it joins your data. Same-description rows share an
         {' '}<strong style={{ color: C.accent }}>apply to all</strong> shortcut.
       </p>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        padding: '8px 12px', marginBottom: 12,
+        background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+      }}>
+        <span style={{ fontSize: 12, color: C.muted }}>Only import between</span>
+        <input
+          type="date" className="input-base" style={{ colorScheme: 'dark' }}
+          aria-label="Range start date"
+          value={range.from}
+          onChange={(e) => setRange((r) => ({ ...r, from: e.target.value }))}
+        />
+        <span style={{ fontSize: 12, color: C.muted }}>and</span>
+        <input
+          type="date" className="input-base" style={{ colorScheme: 'dark' }}
+          aria-label="Range end date"
+          value={range.to}
+          onChange={(e) => setRange((r) => ({ ...r, to: e.target.value }))}
+        />
+        {(range.from || range.to) && (
+          <button
+            className="chip"
+            onClick={() => setRange({ from: '', to: '' })}
+            title="Clear the range and include every row again"
+          >
+            clear
+          </button>
+        )}
+      </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {rows.map((row) => (
@@ -91,6 +133,8 @@ export default function ImportCsvModal({
             accounts={accounts}
             categories={categories(row.type)}
             repeated={repeatedDescriptions.has(row.description)}
+            outOfRange={outOfRange(row)}
+            excludedReason={rangeExclusionReason(row.date, range)}
             onChange={(patch) => patchRow(row.key, patch)}
             onApplyToAll={() => applyToAll(row)}
             onToggleSkip={() => patchRow(row.key, { skip: !row.skip })}
@@ -125,13 +169,14 @@ export default function ImportCsvModal({
 }
 
 function RowEditor({
-  row, accounts, categories, repeated, onChange, onApplyToAll, onToggleSkip, onAddSubcategory,
+  row, accounts, categories, repeated, outOfRange, excludedReason,
+  onChange, onApplyToAll, onToggleSkip, onAddSubcategory,
 }) {
   // Local state for the inline "new subcategory" input, like TransactionForm.
   const [newSub, setNewSub] = useState(null);
   const isTransfer = row.type === 'transfer';
   const isLoan = row.type === 'loan';
-  const isIncluded = !row.skip;
+  const isIncluded = !row.skip && !outOfRange;
 
   const commitNewSub = () => {
     const value = (newSub || '').trim();
@@ -170,7 +215,9 @@ function RowEditor({
       </div>
 
       {!isIncluded && (
-        <p style={{ fontSize: 11, color: C.faint, margin: '4px 0 0' }}>Skipped — will not be imported.</p>
+        <p style={{ fontSize: 11, color: C.faint, margin: '4px 0 0' }}>
+          {row.skip ? 'Skipped — will not be imported.' : `${excludedReason} — will not be imported.`}
+        </p>
       )}
 
       {isIncluded && (
