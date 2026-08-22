@@ -28,13 +28,13 @@ export default function ImportCsvModal({
   const [range, setRange] = useState({ from: '', to: '' });
   const [error, setError] = useState('');
 
-  const included = rows.filter((r) => !r.skip && !outOfRange(r));
-  const categories = (type) => (type === 'income' ? incomeCategories : expenseCategories);
-
   /** Empty bounds are open-ended: only the filled side filters. */
   const outOfRange = (r) => (
     (range.from && r.date < range.from) || (range.to && r.date > range.to)
   );
+
+  const included = rows.filter((r) => !r.skip && !outOfRange(r));
+  const categories = (type) => (type === 'income' ? incomeCategories : expenseCategories);
 
   const rangeExclusionReason = (date, r) => {
     if (r.from && date < r.from) return `Before ${shortDate(r.from)}`;
