@@ -1,30 +1,20 @@
 import { useMemo, useState } from 'react';
-import { Check, Plus } from 'lucide-react';
+import { Check, Plus, Trash2 } from 'lucide-react';
 import { C, TRANSFER_CATEGORY, LOAN_CATEGORY } from '../lib/constants';
 import { formatIDR, shortDate } from '../lib/format';
 import { Modal } from './ui';
 
-const draftRow = (d, accounts, defaultAccountId = '') => ({
-  ...d,
-  type: d.amount > 0 ? 'income' : 'expense',
-  accountId: defaultAccountId || accounts[0]?.id || '',
-  category: '',
-  subcategory: '',
-  note: d.description,
-  skip: false,
-});
-
 /**
- * Review screen for a bank-statement CSV import. Each parsed row becomes a
- * draft the user confirms (or skips) before anything merges into the tracker.
+ * Review screen for a bank-statement CSV import. Rows are controlled from App
+ * (which also persists them), so closing the modal — or the browser — keeps
+ * every categorisation; only Discard throws the session away.
  * Rows sharing a description get an "apply to all" shortcut so recurring
  * merchants only need categorising once.
  */
 export default function ImportCsvModal({
-  drafts, accounts, expenseCategories, incomeCategories,
-  defaultAccountId, onConfirm, onClose, onAddSubcategory,
+  rows, onRowsChange, accounts, expenseCategories, incomeCategories,
+  onConfirm, onClose, onDiscard, onAddSubcategory,
 }) {
-  const [rows, setRows] = useState(() => drafts.map((d) => draftRow(d, accounts, defaultAccountId)));
   const [range, setRange] = useState({ from: '', to: '' });
   const [error, setError] = useState('');
 
@@ -33,14 +23,14 @@ export default function ImportCsvModal({
     (range.from && r.date < range.from) || (range.to && r.date > range.to)
   );
 
-  const included = rows.filter((r) => !r.skip && !outOfRange(r));
-  const categories = (type) => (type === 'income' ? incomeCategories : expenseCategories);
-
   const rangeExclusionReason = (date, r) => {
     if (r.from && date < r.from) return `Before ${shortDate(r.from)}`;
     if (r.to && date > r.to) return `After ${shortDate(r.to)}`;
     return 'Outside the selected range';
   };
+
+  const included = rows.filter((r) => !r.skip && !outOfRange(r));
+  const categories = (type) => (type === 'income' ? incomeCategories : expenseCategories);
 
   const repeatedDescriptions = useMemo(() => {
     const counts = new Map();
@@ -49,7 +39,7 @@ export default function ImportCsvModal({
   }, [rows]);
 
   const patchRow = (key, patch) => {
-    setRows((prev) => prev.map((r) => {
+    onRowsChange(rows.map((r) => {
       if (r.key !== key) return r;
       const next = { ...r, ...patch };
       if (patch.type && patch.type !== r.type) {
@@ -72,7 +62,7 @@ export default function ImportCsvModal({
 
   /** Apply this row's type/category/account to every row with the same description. */
   const applyToAll = (row) => {
-    setRows((prev) => prev.map((r) => (
+    onRowsChange(rows.map((r) => (
       r.description === row.description && r.key !== row.key
         ? { ...r, type: row.type, category: row.category, subcategory: row.subcategory, accountId: row.accountId }
         : r
@@ -91,8 +81,8 @@ export default function ImportCsvModal({
   return (
     <Modal title={`Import CSV — ${included.length} of ${rows.length} rows`} onClose={onClose}>
       <p style={{ fontSize: 12, color: C.muted, margin: '-12px 0 10px', lineHeight: 1.6 }}>
-        Confirm each row before it joins your data. Same-description rows share an
-        {' '}<strong style={{ color: C.accent }}>apply to all</strong> shortcut.
+        Your progress is saved automatically — close this any time and pick up
+        where you left off via the import button.
       </p>
 
       <div style={{
@@ -147,22 +137,31 @@ export default function ImportCsvModal({
         <p role="alert" style={{ fontSize: 12, color: C.redBright, margin: '12px 0 0' }}>{error}</p>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
-        <button className="chip" onClick={onClose}>Cancel</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 18 }}>
         <button
-          onClick={confirm}
-          disabled={included.length === 0}
-          style={{
-            padding: '8px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600,
-            background: 'rgba(90,138,106,0.15)', color: C.greenBright,
-            border: '1px solid rgba(90,138,106,0.3)',
-            display: 'flex', alignItems: 'center', gap: 4,
-            opacity: included.length === 0 ? 0.5 : 1,
-          }}
+          className="chip" onClick={onDiscard}
+          title="Throw away this import session and everything categorised so far"
+          style={{ color: C.redBright, display: 'flex', alignItems: 'center', gap: 4 }}
         >
-          <Check size={14} />
-          Import {included.length} transaction{included.length === 1 ? '' : 's'}
+          <Trash2 size={12} /> Discard
         </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="chip" onClick={onClose}>Finish later</button>
+          <button
+            onClick={confirm}
+            disabled={included.length === 0}
+            style={{
+              padding: '8px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600,
+              background: 'rgba(90,138,106,0.15)', color: C.greenBright,
+              border: '1px solid rgba(90,138,106,0.3)',
+              display: 'flex', alignItems: 'center', gap: 4,
+              opacity: included.length === 0 ? 0.5 : 1,
+            }}
+          >
+            <Check size={14} />
+            Import {included.length} transaction{included.length === 1 ? '' : 's'}
+          </button>
+        </div>
       </div>
     </Modal>
   );

@@ -85,3 +85,19 @@ export function accountIdFromFilename(filename, accounts) {
 
   return scored[0]?.acc.id || '';
 }
+
+/**
+ * Initial review rows for a freshly parsed CSV. Used by App when a file is
+ * chosen; lives here (not in the modal) so modal stays a pure component.
+ */
+export function buildDraftRows(drafts, accounts, defaultAccountId = '') {
+  return drafts.map((d) => ({
+    ...d,
+    type: d.amount > 0 ? 'income' : 'expense',
+    accountId: defaultAccountId || accounts[0]?.id || '',
+    category: '',
+    subcategory: '',
+    note: d.description,
+    skip: false,
+  }));
+}

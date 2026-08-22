@@ -26,7 +26,7 @@ import TransactionForm from './components/TransactionForm';
 import TransactionLog from './components/TransactionLog';
 import SettingsModal from './components/SettingsModal';
 import ImportCsvModal from './components/ImportCsvModal';
-import { csvToDrafts, accountIdFromFilename } from './lib/csv';
+import { buildDraftRows, csvToDrafts, accountIdFromFilename } from './lib/csv';
 import { Toast } from './components/ui';
 
 export default function App() {
@@ -43,8 +43,8 @@ export default function App() {
   const [viewMonth, setViewMonth] = useState(currentMonthKey);
   const [editingTxId, setEditingTxId] = useState(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [csvDrafts, setCsvDrafts] = useState(null); // parsed rows awaiting review
-  const [csvAccountGuess, setCsvAccountGuess] = useState('');
+  const [csvRows, setCsvRows] = useState(null); // review rows; survives closing the modal
+  const [isCsvOpen, setIsCsvOpen] = useState(false);
   const [toast, setToast] = useState(null);
   const [filters, setFilters] = useState({
     q: '', accountId: 'all', type: 'all', tag: null, scope: 'month',
@@ -58,15 +58,22 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [tx, acc, expCat, incCat, saved] = await Promise.all(
-          Object.values(STORE_KEYS).map((k) => localforage.getItem(k)),
-        );
+        const [tx, acc, expCat, incCat, saved, csvSession] = await Promise.all([
+          localforage.getItem(STORE_KEYS.transactions),
+          localforage.getItem(STORE_KEYS.accounts),
+          localforage.getItem(STORE_KEYS.expenseCategories),
+          localforage.getItem(STORE_KEYS.incomeCategories),
+          localforage.getItem(STORE_KEYS.settings),
+          localforage.getItem(STORE_KEYS.csvImport),
+        ]);
         if (tx) setTransactions(tx);
         // Accounts saved before savings pots existed have no `kind`.
         if (acc) setAccounts(acc.map((a) => ({ kind: 'spending', ...a })));
         if (expCat) setExpenseCategories(expCat);
         if (incCat) setIncomeCategories(incCat);
         if (saved) setSettings({ ...DEFAULT_SETTINGS, ...saved });
+        // An unfinished CSV review reopens with the app, work intact.
+        if (Array.isArray(csvSession) && csvSession.length > 0) setCsvRows(csvSession);
       } catch {
         notify('Could not read saved data.');
       } finally {
@@ -82,7 +89,14 @@ export default function App() {
     localforage.setItem(STORE_KEYS.expenseCategories, expenseCategories);
     localforage.setItem(STORE_KEYS.incomeCategories, incomeCategories);
     localforage.setItem(STORE_KEYS.settings, settings);
-  }, [isLoaded, transactions, accounts, expenseCategories, incomeCategories, settings]);
+    // csvRows is written separately below so a null (no session / discarded)
+    // clears the key instead of being skipped.
+    if (csvRows !== null) {
+      localforage.setItem(STORE_KEYS.csvImport, csvRows);
+    } else {
+      localforage.removeItem(STORE_KEYS.csvImport);
+    }
+  }, [isLoaded, transactions, accounts, expenseCategories, incomeCategories, settings, csvRows]);
 
   // --- Derived -------------------------------------------------------------
   const totals = useMemo(() => monthTotals(transactions, viewMonth), [transactions, viewMonth]);
@@ -464,11 +478,33 @@ export default function App() {
       }
       // The filename doubles as the account id: "debitmandiri_agustus.csv"
       // pre-fills every row's account from the name match.
-      setCsvAccountGuess(accountIdFromFilename(file.name, accounts));
-      setCsvDrafts(drafts);
+      const guess = accountIdFromFilename(file.name, accounts);
+      // Picking a new file replaces any unfinished review — make that
+      // explicit so hours of categorising are not lost to one click.
+      if (csvRows && !window.confirm(
+        'You have an import in progress. Replace it with this new file?\n\n'
+        + '(Cancel keeps the current review — it stays saved.)',
+      )) {
+        setIsCsvOpen(true); // keep the old session on screen
+        return;
+      }
+      setCsvRows(buildDraftRows(drafts, accounts, guess));
+      setIsCsvOpen(true);
     };
     reader.readAsText(file);
     e.target.value = '';
+  };
+
+  /** Header icon: resume the saved review if there is one, otherwise pick a file. */
+  const openCsvImport = () => {
+    if (csvRows) setIsCsvOpen(true);
+    else csvInputRef.current?.click();
+  };
+
+  const discardCsvImport = () => {
+    setCsvRows(null);
+    setIsCsvOpen(false);
+    notify('Import discarded.');
   };
 
   /**
@@ -494,7 +530,8 @@ export default function App() {
     }));
 
     setTransactions((prev) => [...imported, ...prev]);
-    setCsvDrafts(null);
+    setCsvRows(null);
+    setIsCsvOpen(false);
 
     // Jump to the month most of the statement covers so the rows are visible.
     const monthCounts = imported.reduce((acc, t) => {
@@ -575,7 +612,13 @@ export default function App() {
               {backupAge === null ? 'Never backed up' : `Backed up ${backupAge}d ago`}
             </button>
           )}
-          <button className="btn-icon" onClick={() => csvInputRef.current?.click()} aria-label="Import CSV bank statement" title="Import CSV bank statement">
+          <button
+            className="btn-icon"
+            onClick={openCsvImport}
+            aria-label="Import CSV bank statement"
+            title={csvRows ? 'Resume CSV import (in progress)' : 'Import CSV bank statement'}
+            style={csvRows ? { color: C.accent } : undefined}
+          >
             <FileUp size={18} />
           </button>
           <button className="btn-icon" onClick={() => setIsSettingsOpen(true)} aria-label="Open settings">
@@ -676,15 +719,16 @@ export default function App() {
         />
       )}
 
-      {csvDrafts && (
+      {csvRows && isCsvOpen && (
         <ImportCsvModal
-          drafts={csvDrafts}
+          rows={csvRows}
+          onRowsChange={setCsvRows}
           accounts={accounts}
           expenseCategories={expenseCategories}
           incomeCategories={incomeCategories}
-          defaultAccountId={csvAccountGuess}
           onConfirm={confirmCsvImport}
-          onClose={() => setCsvDrafts(null)}
+          onClose={() => setIsCsvOpen(false)}
+          onDiscard={discardCsvImport}
           onAddSubcategory={addSubcategory}
         />
       )}

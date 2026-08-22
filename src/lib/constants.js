@@ -77,4 +77,5 @@ export const STORE_KEYS = {
   expenseCategories: 'expenseCategories',
   incomeCategories: 'incomeCategories',
   settings: 'settings',
+  csvImport: 'csvImportSession', // in-progress CSV review; survives closing the modal
 };
