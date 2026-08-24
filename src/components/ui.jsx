@@ -61,9 +61,14 @@ export function EmptyState({ children, height = 120 }) {
 /** Modal with Esc-to-close, backdrop click, and focus moved into the panel. */
 export function Modal({ title, onClose, children }) {
   const panelRef = useRef(null);
+  // Callers pass a fresh inline onClose every render. Reading it through a ref
+  // keeps the effect below on an empty dep list, so it does not tear down and
+  // re-run — and re-focus the panel — on every keystroke inside the modal.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current(); };
     document.addEventListener('keydown', onKey);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -72,7 +77,7 @@ export function Modal({ title, onClose, children }) {
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = prevOverflow;
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div
